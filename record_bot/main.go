@@ -6,13 +6,22 @@ import (
 	"os/signal"
 	"syscall"
 
+	//not neccesary
+	"reflect"
+
 	"github.com/bwmarrin/discordgo"
 )
+
+type Bot struct{
+	Token string
+}
 
 func main(){
 	Token := "MTM3ODk4Njg1NDE0OTUyNTUzNA.GTuuhN.-m5W5104PYJB96vcBeM7a0vBctGevPtH2Fst-g"
 
 	dg, err:=discordgo.New("Bot "+Token)
+	t := reflect.typeOf(dg)
+	fmt.Println(t)
 	if err != nil{
 		fmt.Println("Bot作成エラー:", err)
 		return
@@ -70,9 +79,9 @@ func startRecord(guildID string, userID string, s *discordgo.Session, m *discord
 		return
 	}
 
-	a.ChannelMessageSend(m.ChannelID, "録音を開始します。")
+	s.ChannelMessageSend(m.ChannelID, "録音を開始します。")
 
-	vs.Speaking(true)
+	vc.Speaking(true)
 
 	file, err := os.Create("record.opus")
 	if err != nil{
@@ -88,7 +97,7 @@ func startRecord(guildID string, userID string, s *discordgo.Session, m *discord
 				fmt.Println("音声受信終了")
 				break
 			}
-			file.Write(p)
+			file.Write(p.Opus)
 		}
 	}()
 }
