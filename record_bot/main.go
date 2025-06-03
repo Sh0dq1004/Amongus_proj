@@ -3,33 +3,38 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
+	//"os/signal"
+	//"syscall"
 
 	//not neccesary
-	"reflect"
+	//"reflect"
 
 	"github.com/bwmarrin/discordgo"
 )
 
-type Bot struct{
-	Token string
-}
+var (
+	file *os.File
+	vc_r *discordgo.VoiceConnection
+	vc_p *discordgo.VoiceConnection
+)
 
 func main(){
-	Token := "MTM3ODk4Njg1NDE0OTUyNTUzNA.GTuuhN.-m5W5104PYJB96vcBeM7a0vBctGevPtH2Fst-g"
+	var token string
+	fmt.Println("録音用botのトークンを入力してください")
+	fmt.Scanln(&token)
+	record_dg := bot_init(token)
+	fmt.Println("再生用botのトークンを入力してください")
+	fmt.Scanln(&token)
+	player_dg := bot_init(token)
 
-	dg, err:=discordgo.New("Bot "+Token)
-	t := reflect.typeOf(dg)
-	fmt.Println(t)
-	if err != nil{
-		fmt.Println("Bot作成エラー:", err)
-		return
-	}
+	defer record_dg.Close()
+	defer player_dg.Close()
 
+	record_dg.AddHandler(Command4Recorder)
+	/*
 	dg.AddHandler(onMessageCreate)
 
-	dg.Identify.Intents=discordgo.IntentsGuildMessage|discordgo.IntentsGuildVoiceStates | discordgo.IntentsMessageContent
+	dg.Identify.Intents=discordgo.IntentsGuildMessages|discordgo.IntentsGuildVoiceStates | discordgo.IntentsMessageContent
 
 	err=dg.Open()
 	if err != nil{
@@ -45,23 +50,47 @@ func main(){
 
 	fmt.Println("Botを終了します。")
 	dg.Close()
+	*/
 
 }
 
-func onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate){
+func bot_init(token string) (dg *discordgo.Session){
+	dg, err := discordgo.New("Bot "+token);
+	if err!=nil{
+		fmt.Println("Bot作成エラー:", err)
+		return
+	}
+	return
+}
+
+func Command4Recorder(s *discordgo.Session, m *discordgo.MessageCreate){
 	if m.Author.Bot{return}
 
-	if m.Content=="!connect recorder"{
-		startRecord(m.GuildID, m.Author.ID, s, m)
+	if m.Content=="!start record"{
+		go startRecord(m.GuildID, m.Author.ID, s, m)
+	}
+
+	if m.Content=="!stop record"{
+		file.Close()
+		vc.Disconnect()
 	}
 	
 }
 
+func Command4Player(s *discordgo.Session, m *discordgo.MessageCreate){
+	if m.Author.Bot{return}
+
+	if m.Content=="!start player"{
+		startRecord(m.GuildID, m.Author.ID, s, m)
+	}
+}
+
 func startRecord(guildID string, userID string, s *discordgo.Session, m *discordgo.MessageCreate){
 	var channelID string
+	var err error
 	guild,_:=s.State.Guild(guildID)
 	for _, vs:=range guild.VoiceStates{
-		if vs.userID==userID{
+		if vs.UserID==userID{
 			channelID=vs.ChannelID
 			break
 		}
@@ -72,10 +101,10 @@ func startRecord(guildID string, userID string, s *discordgo.Session, m *discord
 		return
 	}
 
-	vc, err:=s.ChannelVoiceJoin(guildID, channelID, true, true)
+	vc, err = s.ChannelVoiceJoin(guildID, channelID, false, false)
 	if err!=nil{
 		s.ChannelMessageSend(m.ChannelID, "ボイスチャンネルへの接続に失敗しました。")
-		fmt.Println("vs接続エラー:", err)
+		fmt.Println("vc接続エラー:", err)
 		return
 	}
 
@@ -83,21 +112,17 @@ func startRecord(guildID string, userID string, s *discordgo.Session, m *discord
 
 	vc.Speaking(true)
 
-	file, err := os.Create("record.opus")
+	file, err = os.Create("record.opus")
 	if err != nil{
 		fmt.Println("ファイル作成エラー:",err)
 		return
 	}
-
-	go func(){
-		defer file.Close()
-		for {
-			p, ok := <-vc.OpusRecv
-			if !ok{
-				fmt.Println("音声受信終了")
-				break
-			}
-			file.Write(p.Opus)
+	for {
+		p, ok := <-vc.OpusRecv
+		if !ok{
+			fmt.Println("音声受信終了")
+			break
 		}
-	}()
+		file.Write(p.Opus)
+	}
 }
