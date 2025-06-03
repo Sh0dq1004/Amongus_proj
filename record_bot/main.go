@@ -7,7 +7,7 @@ import (
 	"syscall"
 
 	//not neccesary
-	//"reflect"
+	"reflect"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -16,6 +16,8 @@ var (
 	file *os.File
 	vc_r *discordgo.VoiceConnection
 	vc_p *discordgo.VoiceConnection
+	p *discordgo.Packet
+
 )
 
 func main(){
@@ -47,7 +49,7 @@ func main(){
 		return
 	}
 
-	fmt.Println("Bot起動中。!start recorder で録音開始。")
+	fmt.Println("Bot起動中。!start record で録音開始。")
 	fmt.Println("Bot起動中。!start player で録音開始。")
 
 	stop := make(chan os.Signal, 1)
@@ -102,27 +104,6 @@ func Command4Player(s *discordgo.Session, m *discordgo.MessageCreate){
 	}
 }
 
-func startRecord(s *discordgo.Session, m *discordgo.MessageCreate){
-	var err error
-	s.ChannelMessageSend(m.ChannelID, "録音を開始します。")
-
-	vc_r.Speaking(true)
-
-	file, err = os.Create("record.opus")
-	if err != nil{
-		fmt.Println("ファイル作成エラー:",err)
-		return
-	}
-	for {
-		p, ok := <-vc_r.OpusRecv
-		if !ok{
-			fmt.Println("音声受信終了")
-			break
-		}
-		file.Write(p.Opus)
-	}
-}
-
 func connectVC(guildID string, userID string, s *discordgo.Session, m *discordgo.MessageCreate) (vc *discordgo.VoiceConnection, err error){
 	var channelID string
 	guild,_:=s.State.Guild(guildID)
@@ -145,4 +126,25 @@ func connectVC(guildID string, userID string, s *discordgo.Session, m *discordgo
 		return
 	}
 	return
+}
+
+func startRecord(s *discordgo.Session, m *discordgo.MessageCreate){
+	var err error
+	s.ChannelMessageSend(m.ChannelID, "録音を開始します。")
+	vc_r.Speaking(true)
+
+	file, err = os.Create("record.opus")
+	if err != nil{
+		fmt.Println("ファイル作成エラー:",err)
+		return
+	}
+	var ok bool
+	for {
+		p, ok = <-vc_r.OpusRecv
+		if !ok{
+			fmt.Println("音声受信終了")
+			break
+		}
+		file.Write(p.Opus)
+	}
 }
