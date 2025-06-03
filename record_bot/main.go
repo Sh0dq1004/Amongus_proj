@@ -5,9 +5,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+	//"container/list"
 
 	//not neccesary
-	"reflect"
+	//"reflect"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -16,8 +18,8 @@ var (
 	file *os.File
 	vc_r *discordgo.VoiceConnection
 	vc_p *discordgo.VoiceConnection
-	p *discordgo.Packet
-
+	sound_data = map[uint32][]*discordgo.Packet{}
+	playing []uint32
 )
 
 func main(){
@@ -70,12 +72,14 @@ func bot_init(token string) (dg *discordgo.Session){
 
 func Command4Recorder(s *discordgo.Session, m *discordgo.MessageCreate){
 	var err error
+	var err_bool bool = false
 	if m.Author.Bot{return}
 
 	if m.Content=="!start record"{
-		vc_r, err=connectVC(m.GuildID, m.Author.ID, s, m)
-		if err!=nil{
+		vc_r, err, err_bool= connectVC(m.GuildID, m.Author.ID, s, m)
+		if err!=nil||err_bool{
 			fmt.Println("recorder not started yet")
+			return
 		}
 		go startRecord(s, m)
 	}
@@ -89,14 +93,16 @@ func Command4Recorder(s *discordgo.Session, m *discordgo.MessageCreate){
 
 func Command4Player(s *discordgo.Session, m *discordgo.MessageCreate){
 	var err error
+	var err_bool bool = false
 	if m.Author.Bot{return}
 
 	if m.Content=="!start player"{
-		vc_p, err=connectVC(m.GuildID, m.Author.ID, s, m)
-		if err!=nil{
+		vc_p, err, err_bool = connectVC(m.GuildID, m.Author.ID, s, m)
+		if err!=nil||err_bool{
 			fmt.Println("recorder not started yet")
+			return 
 		}
-		go startRecord(s, m)
+		go startPlayer(s, m)
 	}
 
 	if m.Content=="!stop player"{
@@ -104,23 +110,33 @@ func Command4Player(s *discordgo.Session, m *discordgo.MessageCreate){
 	}
 }
 
-func connectVC(guildID string, userID string, s *discordgo.Session, m *discordgo.MessageCreate) (vc *discordgo.VoiceConnection, err error){
+func connectVC(guildID string, userID string, s *discordgo.Session, m *discordgo.MessageCreate) (vc *discordgo.VoiceConnection, err error, err_bool bool){
 	var channelID string
-	guild,_:=s.State.Guild(guildID)
+	err_bool=false
+	guild,err:=s.State.Guild(guildID)
+	if err != nil || guild == nil {
+		guild, err = s.Guild(guildID)
+		if err != nil {
+			err_bool = true
+			s.ChannelMessageSend(m.ChannelID, "ギルド情報の取得に失敗しました。")
+			return
+		}
+	}
 	for _, vs:=range guild.VoiceStates{
 		if vs.UserID==userID{
 			channelID=vs.ChannelID
 			break
 		}
 	}
-
 	if channelID==""{
+		err_bool=true
 		s.ChannelMessageSend(m.ChannelID, "ボイスチャンネルに参加してからコマンドを送ってください。")
-		return
+		return 
 	}
 
 	vc, err = s.ChannelVoiceJoin(guildID, channelID, false, false)
 	if err!=nil{
+		err_bool=true
 		s.ChannelMessageSend(m.ChannelID, "ボイスチャンネルへの接続に失敗しました。")
 		fmt.Println("vc接続エラー:", err)
 		return
@@ -129,22 +145,48 @@ func connectVC(guildID string, userID string, s *discordgo.Session, m *discordgo
 }
 
 func startRecord(s *discordgo.Session, m *discordgo.MessageCreate){
-	var err error
 	s.ChannelMessageSend(m.ChannelID, "録音を開始します。")
 	vc_r.Speaking(true)
-
-	file, err = os.Create("record.opus")
-	if err != nil{
-		fmt.Println("ファイル作成エラー:",err)
-		return
-	}
-	var ok bool
 	for {
-		p, ok = <-vc_r.OpusRecv
+		p, ok := <-vc_r.OpusRecv
 		if !ok{
 			fmt.Println("音声受信終了")
 			break
 		}
-		file.Write(p.Opus)
+		pss:=p.SSRC
+		sound_data[pss]=append(sound_data[pss], p)
 	}
+}
+
+func startPlayer(s *discordgo.Session, m *discordgo.MessageCreate){
+	s.ChannelMessageSend(m.ChannelID, "再生を開始します。")
+	vc_p.Speaking(true)
+
+	for {
+		for ssrc, _ := range sound_data{
+			b,_:= find(playing, ssrc)
+			if !b{
+				go soundPlayThread(ssrc)
+			}
+		}
+	}
+}
+
+func soundPlayThread(ssrc uint32){
+	playing=append(playing, ssrc)
+	for _, p := range sound_data[ssrc]{
+		vc_p.OpusSend <- p.Opus
+		time.Sleep(20 * time.Millisecond)
+	}
+	_, i := find(playing, ssrc)
+	playing = append(playing[:i], playing[i+1:]...)
+}
+
+func find(slice []uint32, ssrc uint32) (bool, int) {
+	for i,e := range slice{
+		if e==ssrc{
+			return true, i
+		}
+	}
+	return false, 0
 }
