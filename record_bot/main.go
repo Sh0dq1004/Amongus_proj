@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"layeh.com/gopus"
 	//"time"
 	//"container/list"
 
@@ -18,9 +19,22 @@ var (
 	file *os.File
 	vc_r *discordgo.VoiceConnection
 	vc_p *discordgo.VoiceConnection
-	//sound_data=map[uint32][]*discordgo.Packet{}
-	sound_data = make(map[uint32]chan *discordgo.Packet)
-	playing []uint32
+	sound_data []chan *discordgo.Packet
+	encoder, _ = gopus.NewEncoder(48000, 2, gopus.Audio)
+	decorder_list = []*gopus.Decoder{
+		gopus.NewDecoder(48000, 2), //hontai,err=gopus.NewDecoder(48000, 2) だからエラー
+		gopus.NewDecoder(48000, 2),
+		gopus.NewDecoder(48000, 2),
+		gopus.NewDecoder(48000, 2),
+		gopus.NewDecoder(48000, 2),
+		gopus.NewDecoder(48000, 2),
+		gopus.NewDecoder(48000, 2),
+		gopus.NewDecoder(48000, 2),
+		gopus.NewDecoder(48000, 2),
+		gopus.NewDecoder(48000, 2),
+	}
+	user_list [] uint32
+	playing [] uint32
 )
 
 func main(){
@@ -70,6 +84,8 @@ func bot_init(token string) (dg *discordgo.Session){
 	}
 	return
 }
+
+
 
 func Command4Recorder(s *discordgo.Session, m *discordgo.MessageCreate){
 	var err error
@@ -149,37 +165,41 @@ func startRecord(s *discordgo.Session, m *discordgo.MessageCreate){
 	s.ChannelMessageSend(m.ChannelID, "録音を開始します。")
 	vc_r.Speaking(true)
 	for {
-		p, ok := <-vc_r.OpusRecv
-		if !ok{
-			fmt.Println("音声受信終了")
-			break
-		}
+		p,_:= <-vc_r.OpusRecv
 		pss:=p.SSRC
-		if exit,_:=find(playing, pss); !exit{
-			sound_data[pss] = make(chan *discordgo.Packet, 128)
-			playing=append(playing, pss)
+		exit,i:=find(user_list, pss)
+		if !exit{
+			pchan := make (chan *discordgo.Packet, 128)
+			sound_data=append(sound_data, pchan)
+			user_list=append(user_list, pss)
 		}
-		sound_data[pss] <- p
+		sound_data[i] <- p
 	}
 }
 
 func startPlayer(s *discordgo.Session, m *discordgo.MessageCreate){
 	s.ChannelMessageSend(m.ChannelID, "再生を開始します。")
 	vc_p.Speaking(true)
+
 	for {
-		for ssrc, pchan := range sound_data{
-			if exit,i:=find(playing, ssrc); exit{
-				playing = append(playing[:i], playing[i+1:]...)
+		vc_p.OpusSend <- opusMixer()
+	}
+
+	/*
+	for {
+		for i,pchan := range sound_data{
+			if exit,i:=find(playing, user_list[i]); !exit{
+				playing = append(playing, user_list[i])
 				go func(){
 					for {
 						p:=<-pchan
 						vc_p.OpusSend <-p.Opus
 					}
-					playing=append(playing, ssrc)
+					playing=append(playing[:i], playing[i+1:]...)
 				}()
 			}
 		}
-	}
+	}*/
 }
 
 func find(slice []uint32, ssrc uint32) (bool, int) {
@@ -188,5 +208,24 @@ func find(slice []uint32, ssrc uint32) (bool, int) {
 			return true, i
 		}
 	}
-	return false, 0
+	return false, len(slice)
+}
+
+func opusMixer() (opusData []byte){
+	var pmc_list []int16
+	for i,p:=range sound_data{pmc_list[i]=decorder_list[i].Decode(p.Opus, 960, false)}
+	mixed := make([]int16, len(pmc_list[0]))
+	for i := range mixed {
+		var v int = 0 
+		for _,pcm:=range pmc_list{ v+=int(pcm) }
+		v/=len(pmc_list)
+		if v > 32767 {
+			v = 32767 
+		} else if v < -32768 {
+			v = -32768
+		}
+		mixed[i] = int16(v)
+	}
+	opusData, _ := encoder.Encode(mixed, 960, 960*2)
+	return
 }
