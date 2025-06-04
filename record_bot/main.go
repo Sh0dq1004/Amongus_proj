@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
+	//"time"
 	//"container/list"
 
 	//not neccesary
@@ -18,7 +18,8 @@ var (
 	file *os.File
 	vc_r *discordgo.VoiceConnection
 	vc_p *discordgo.VoiceConnection
-	sound_data = map[uint32][]*discordgo.Packet{}
+	//sound_data=map[uint32][]*discordgo.Packet{}
+	sound_data = make(map[uint32]chan *discordgo.Packet)
 	playing []uint32
 )
 
@@ -154,32 +155,31 @@ func startRecord(s *discordgo.Session, m *discordgo.MessageCreate){
 			break
 		}
 		pss:=p.SSRC
-		sound_data[pss]=append(sound_data[pss], p)
+		if exit,_:=find(playing, pss); !exit{
+			sound_data[pss] = make(chan *discordgo.Packet, 128)
+			playing=append(playing, pss)
+		}
+		sound_data[pss] <- p
 	}
 }
 
 func startPlayer(s *discordgo.Session, m *discordgo.MessageCreate){
 	s.ChannelMessageSend(m.ChannelID, "再生を開始します。")
 	vc_p.Speaking(true)
-
 	for {
-		for ssrc, _ := range sound_data{
-			b,_:= find(playing, ssrc)
-			if !b{
-				go soundPlayThread(ssrc)
+		for ssrc, pchan := range sound_data{
+			if exit,i:=find(playing, ssrc); exit{
+				playing = append(playing[:i], playing[i+1:]...)
+				go func(){
+					for {
+						p:=<-pchan
+						vc_p.OpusSend <-p.Opus
+					}
+					playing=append(playing, ssrc)
+				}()
 			}
 		}
 	}
-}
-
-func soundPlayThread(ssrc uint32){
-	playing=append(playing, ssrc)
-	for _, p := range sound_data[ssrc]{
-		vc_p.OpusSend <- p.Opus
-		time.Sleep(20 * time.Millisecond)
-	}
-	_, i := find(playing, ssrc)
-	playing = append(playing[:i], playing[i+1:]...)
 }
 
 func find(slice []uint32, ssrc uint32) (bool, int) {
