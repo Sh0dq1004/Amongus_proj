@@ -21,18 +21,7 @@ var (
 	vc_p *discordgo.VoiceConnection
 	sound_data []chan *discordgo.Packet
 	encoder, _ = gopus.NewEncoder(48000, 2, gopus.Audio)
-	decorder_list = []*gopus.Decoder{
-		gopus.NewDecoder(48000, 2), //hontai,err=gopus.NewDecoder(48000, 2) だからエラー
-		gopus.NewDecoder(48000, 2),
-		gopus.NewDecoder(48000, 2),
-		gopus.NewDecoder(48000, 2),
-		gopus.NewDecoder(48000, 2),
-		gopus.NewDecoder(48000, 2),
-		gopus.NewDecoder(48000, 2),
-		gopus.NewDecoder(48000, 2),
-		gopus.NewDecoder(48000, 2),
-		gopus.NewDecoder(48000, 2),
-	}
+	decorder_list []*gopus.Decoder
 	user_list [] uint32
 	playing [] uint32
 )
@@ -48,6 +37,8 @@ func main(){
 
 	defer record_dg.Close()
 	defer player_dg.Close()
+
+	decorder_init()
 
 	record_dg.AddHandler(Command4Recorder)
 	player_dg.AddHandler(Command4Player)
@@ -85,6 +76,16 @@ func bot_init(token string) (dg *discordgo.Session){
 	return
 }
 
+func decorder_init(){
+	for i:=0;i<10;i++{
+		d,err:=gopus.NewDecoder(48000, 2)
+		if err!=nil{
+			fmt.Println("decorder作成エラー:", err)
+			return
+		}
+		decorder_list=append(decorder_list, d)
+	}
+}
 
 
 func Command4Recorder(s *discordgo.Session, m *discordgo.MessageCreate){
@@ -182,24 +183,10 @@ func startPlayer(s *discordgo.Session, m *discordgo.MessageCreate){
 	vc_p.Speaking(true)
 
 	for {
-		vc_p.OpusSend <- opusMixer()
-	}
-
-	/*
-	for {
-		for i,pchan := range sound_data{
-			if exit,i:=find(playing, user_list[i]); !exit{
-				playing = append(playing, user_list[i])
-				go func(){
-					for {
-						p:=<-pchan
-						vc_p.OpusSend <-p.Opus
-					}
-					playing=append(playing[:i], playing[i+1:]...)
-				}()
-			}
+		if len(sound_data) > 0{
+			vc_p.OpusSend <- opusMixer()
 		}
-	}*/
+	}
 }
 
 func find(slice []uint32, ssrc uint32) (bool, int) {
@@ -212,12 +199,18 @@ func find(slice []uint32, ssrc uint32) (bool, int) {
 }
 
 func opusMixer() (opusData []byte){
-	var pmc_list []int16
-	for i,p:=range sound_data{pmc_list[i]=decorder_list[i].Decode(p.Opus, 960, false)}
+	var pmc_list [][]int16
+	for i,pchan:=range sound_data{
+		p:=<-pchan
+		pmc,_:=decorder_list[i].Decode(p.Opus, 960, false)
+		pmc_list=append(pmc_list, pmc)
+	}
 	mixed := make([]int16, len(pmc_list[0]))
 	for i := range mixed {
 		var v int = 0 
-		for _,pcm:=range pmc_list{ v+=int(pcm) }
+		for _,pcm:=range pmc_list{
+			v+=int(pcm[i])
+		}
 		v/=len(pmc_list)
 		if v > 32767 {
 			v = 32767 
@@ -226,6 +219,8 @@ func opusMixer() (opusData []byte){
 		}
 		mixed[i] = int16(v)
 	}
-	opusData, _ := encoder.Encode(mixed, 960, 960*2)
+	if len(mixed)>0{
+		opusData, _ = encoder.Encode(mixed, 960, 960*2)
+	}
 	return
 }
