@@ -16,7 +16,6 @@ import (
 )
 
 var (
-	file *os.File
 	vc_r *discordgo.VoiceConnection
 	vc_p *discordgo.VoiceConnection
 	sound_data []chan *discordgo.Packet
@@ -103,7 +102,6 @@ func Command4Recorder(s *discordgo.Session, m *discordgo.MessageCreate){
 	}
 
 	if m.Content=="!stop record"{
-		file.Close()
 		vc_r.Disconnect()
 	}
 	
@@ -173,6 +171,7 @@ func startRecord(s *discordgo.Session, m *discordgo.MessageCreate){
 			pchan := make (chan *discordgo.Packet, 128)
 			sound_data=append(sound_data, pchan)
 			user_list=append(user_list, pss)
+			i=len(user_list)-1
 		}
 		sound_data[i] <- p
 	}
@@ -181,7 +180,6 @@ func startRecord(s *discordgo.Session, m *discordgo.MessageCreate){
 func startPlayer(s *discordgo.Session, m *discordgo.MessageCreate){
 	s.ChannelMessageSend(m.ChannelID, "再生を開始します。")
 	vc_p.Speaking(true)
-
 	for {
 		if len(sound_data) > 0{
 			vc_p.OpusSend <- opusMixer()
@@ -201,25 +199,31 @@ func find(slice []uint32, ssrc uint32) (bool, int) {
 func opusMixer() (opusData []byte){
 	var pmc_list [][]int16
 	for i,pchan:=range sound_data{
-		p:=<-pchan
-		pmc,_:=decorder_list[i].Decode(p.Opus, 960, false)
+		pmc := make([]int16, 960*2)
+		select {
+		case p:=<-pchan:
+			pmc,_=decorder_list[i].Decode(p.Opus, 960, false)
+		default:
+		}
 		pmc_list=append(pmc_list, pmc)
 	}
-	mixed := make([]int16, len(pmc_list[0]))
-	for i := range mixed {
-		var v int = 0 
-		for _,pcm:=range pmc_list{
-			v+=int(pcm[i])
+	if len(pmc_list) > 0{
+		mixed := make([]int16, len(pmc_list[0]))
+		for i := range mixed {
+			var v int = 0 
+			for _,pcm:=range pmc_list{
+				if len(pcm)>0{
+					v+=int(pcm[i])
+				}
+			}
+			v/=len(pmc_list)
+			if v > 32767 {
+				v = 32767 
+			} else if v < -32768 {
+				v = -32768
+			}
+			mixed[i] = int16(v)
 		}
-		v/=len(pmc_list)
-		if v > 32767 {
-			v = 32767 
-		} else if v < -32768 {
-			v = -32768
-		}
-		mixed[i] = int16(v)
-	}
-	if len(mixed)>0{
 		opusData, _ = encoder.Encode(mixed, 960, 960*2)
 	}
 	return
